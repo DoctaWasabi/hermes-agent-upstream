@@ -173,3 +173,34 @@ class TestShellFileOpsCwdTracking:
         assert target.read_text() == "new content\n", (
             "patch_replace claimed success but file wasn't written correctly"
         )
+
+    def test_write_denied_relative_paths_resolve_against_live_cwd(
+        self, tmp_path, monkeypatch
+    ):
+        """Relative writes must be denied against the terminal cwd.
+
+        Gateway/messaging tasks can run with the terminal cwd set to
+        HERMES_HOME while the Python process cwd is elsewhere.  The shell
+        write executes in the terminal cwd, so the deny check must resolve
+        relative paths against that same cwd before deciding whether
+        ``mcp-tokens/...`` is protected.
+        """
+        import agent.file_safety as fs
+
+        hermes_root = tmp_path / "hermes"
+        hermes_profile = hermes_root / "profiles" / "operator"
+        project = tmp_path / "project"
+        hermes_profile.mkdir(parents=True)
+        project.mkdir()
+        monkeypatch.setattr(fs, "_hermes_home_path", lambda: hermes_profile)
+        monkeypatch.setattr(fs, "_hermes_root_path", lambda: hermes_root)
+
+        env = _FakeEnv(start_cwd=str(project))
+        ops = ShellFileOperations(env, cwd=str(project))
+        env.execute(f"cd {hermes_profile}")
+
+        rel = "mcp-tokens/tok.json"
+        result = ops.write_file(rel, "secret")
+        assert result.error is not None, f"{rel} write should be denied"
+        assert "Write denied" in result.error
+        assert not (hermes_profile / rel).exists()

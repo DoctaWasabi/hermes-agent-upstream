@@ -803,7 +803,23 @@ class ShellFileOperations(FileOperations):
 
         # Cache for command availability checks
         self._command_cache: Dict[str, bool] = {}
-    
+
+    def _effective_cwd(self, cwd: Optional[str] = None) -> str:
+        """Return the cwd that shell-backed file operations will execute in."""
+        return cwd or getattr(self.env, 'cwd', None) or self.cwd
+
+    def _write_safety_path(self, path: str) -> str:
+        """Resolve a write target for denylist evaluation.
+
+        ``is_write_denied()`` resolves relative inputs against the Python
+        process cwd. ShellFileOperations executes relative paths in the terminal
+        cwd, which can differ after ``cd``. Check the same effective cwd that
+        the eventual shell write will use.
+        """
+        if os.path.isabs(path) or path.startswith("~"):
+            return path
+        return os.path.join(self._effective_cwd(), path)
+
     def _exec(self, command: str, cwd: str = None, timeout: int = None,
               stdin_data: str = None) -> ExecuteResult:
         """Execute command via terminal backend.
@@ -829,7 +845,7 @@ class ShellFileOperations(FileOperations):
 
         # Resolve cwd from the live env so `cd` commands are picked up.
         # Fall through to init-time self.cwd only if the env doesn't track cwd.
-        effective_cwd = cwd or getattr(self.env, 'cwd', None) or self.cwd
+        effective_cwd = self._effective_cwd(cwd)
         result = self.env.execute(command, cwd=effective_cwd, **kwargs)
         return ExecuteResult(
             stdout=result.get("output", ""),
@@ -1333,8 +1349,9 @@ class ShellFileOperations(FileOperations):
         # Expand ~ and other shell paths
         path = self._expand_path(path)
 
-        # Block writes to sensitive paths
-        if _is_write_denied(path):
+        # Block writes to sensitive paths. Resolve relative targets against
+        # the same live terminal cwd used by the eventual shell write.
+        if _is_write_denied(self._write_safety_path(path)):
             return WriteResult(error=f"Write denied: '{path}' is a protected system/credential file.")
 
         # Capture pre-write content.  Two consumers want it:
