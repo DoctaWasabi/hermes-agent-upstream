@@ -105,6 +105,19 @@ class TestConfigPassthrough:
         assert "CONFIG_KEY" in all_pt
         assert "SKILL_KEY" in all_pt
 
+    def test_config_passthrough_cannot_register_provider_credentials(self, tmp_path, monkeypatch):
+        from tools.environments.local import _HERMES_PROVIDER_ENV_BLOCKLIST
+
+        blocked_var = next(iter(_HERMES_PROVIDER_ENV_BLOCKLIST))
+        config = {"terminal": {"env_passthrough": [blocked_var, "TENOR_API_KEY"]}}
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(yaml.dump(config))
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        _ep_mod._config_passthrough = None
+
+        assert not is_env_passthrough(blocked_var)
+        assert is_env_passthrough("TENOR_API_KEY")
+
 
 class TestExecuteCodeIntegration:
     """Verify that the passthrough is checked in execute_code's env filtering."""
